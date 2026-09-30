@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mapa Interactivo de Noticias de Sevilla</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- OpenLayers CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        /* OpenLayers canvas adjustments */
+        .ol-viewport {
+            border-radius: 0px;
+        }
+        .ol-zoom {
+            top: 1.25rem;
+            left: 1.25rem;
+        }
+        .ol-zoom button {
+            background-color: rgba(15, 23, 42, 0.9) !important;
+            color: #f8fafc !important;
+            font-weight: bold;
+            border-radius: 0.5rem !important;
+            border: 1px solid rgba(255, 255, 255, 0.1) !important;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3) !important;
+            width: 2.25rem !important;
+            height: 2.25rem !important;
+            margin: 2px !important;
+        }
+        .ol-zoom button:hover {
+            background-color: #2563eb !important;
+        }
+
+        /* Custom Map Tooltip Popup */
+        .ol-popup {
+            position: absolute;
+            background-color: rgba(15, 23, 42, 0.95);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            padding: 8px 14px;
+            border-radius: 8px;
+            border: 1px solid rgba(251, 191, 36, 0.5);
+            bottom: 12px;
+            left: -50px;
+            min-width: 140px;
+            pointer-events: none;
+            backdrop-filter: blur(8px);
+            transition: all 0.15s ease-out;
+        }
+        .ol-popup:after, .ol-popup:before {
+            top: 100%;
+            border: solid transparent;
+            content: " ";
+            height: 0;
+            width: 0;
+            position: absolute;
+            pointer-events: none;
+        }
+        .ol-popup:after {
+            border-top-color: rgba(15, 23, 42, 0.95);
+            border-width: 6px;
+            left: 50px;
+            margin-left: -6px;
+        }
+
+        /* Fade animation for articles */
+        .fade-in {
+            animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Scrollbars */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="h-screen w-screen overflow-hidden flex flex-col bg-slate-950 text-slate-100">
+
+    <!-- Encabezado superior -->
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 px-5 py-3.5 flex items-center justify-between shrink-0 z-20 shadow-lg">
+        <div class="flex items-center space-x-3">
+            <div class="bg-gradient-to-tr from-amber-600 to-red-600 p-2.5 rounded-xl shadow-md shadow-red-900/20">
+                <i class="fa-solid fa-map-location-dot text-white text-xl"></i>
+            </div>
+            <div>
+                <h1 class="text-xl font-extrabold tracking-tight text-white flex items-center gap-2">
+                    Sevilla <span class="text-xs font-semibold bg-amber-500/20 text-amber-400 px-2.5 py-0.5 rounded-full border border-amber-500/30">Mapa de Noticias</span>
+                </h1>
+                <p class="text-xs text-slate-400 hidden sm:block">Selecciona un distrito oficial para consultar la actualidad municipal</p>
+            </div>
+        </div>
+
+        <!-- Carto status indicator -->
+        <div class="flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-full border border-slate-700 text-xs text-slate-300">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="font-medium hidden sm:inline">Mapbox/Carto Layer Activated</span>
+            <span class="font-medium sm:hidden">CARTO Live</span>
+        </div>
+    </header>
+
+    <!-- Contenedor Principal (Mapa + Side Panel) -->
+    <main class="flex-1 relative flex overflow-hidden">
+
+        <!-- DIV DEL MAPA OPENLAYERS -->
+        <div id="map" class="flex-1 h-full w-full relative bg-slate-950"></div>
+
+        <!-- TOOLTIP FLOTANTE DEL MAPA -->
+        <div id="popup" class="ol-popup hidden">
+            <div id="popup-content" class="text-xs font-bold text-amber-300 text-center uppercase tracking-wide"></div>
+        </div>
+
+        <!-- PANEL LATERAL DE NOTICIAS -->
+        <aside id="news-drawer" class="absolute lg:relative right-0 top-0 h-full w-full sm:w-96 md:w-[420px] bg-slate-900/95 backdrop-blur border-l border-slate-800 transform translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out z-30 flex flex-col shadow-2xl">
+            
+            <!-- Cabecera del Panel -->
+            <div class="p-5 border-b border-slate-800 bg-slate-900 flex items-center justify-between shrink-0">
+                <div>
+                    <span class="text-[10px] uppercase font-bold tracking-widest text-amber-400">Distrito Seleccionado</span>
+                    <h2 id="selected-district-title" class="text-2xl font-bold text-white leading-tight">Haz clic en el mapa</h2>
+                </div>
+                <button id="close-drawer-btn" class="lg:hidden text-slate-400 hover:text-white p-2 rounded-lg hover:bg-slate-800 transition">
+                    <i class="fa-solid fa-xmark text-xl"></i>
+                </button>
+            </div>
+
+            <!-- Lista de Noticias -->
+            <div id="news-list" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <!-- Estado Inicial / Vacío -->
+                <div id="empty-state" class="h-full flex flex-col items-center justify-center text-center p-6 text-slate-400 space-y-3">
+                    <div class="w-16 h-16 rounded-2xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-amber-400 mb-1">
+                        <i class="fa-solid fa-hand-pointer text-2xl animate-bounce"></i>
+                    </div>
+                    <p class="font-semibold text-slate-200">Selecciona un distrito</p>
+                    <p class="text-xs text-slate-400 max-w-xs">Haz clic sobre cualquiera de los 11 distritos delimitados en el mapa para cargar las noticias locales.</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- VISTA COMPLETA DE NOTICIA (Pantalla Completa) -->
+        <article id="news-full-view" class="fixed inset-0 bg-slate-950/95 backdrop-blur-md z-50 hidden flex-col overflow-y-auto fade-in">
+            <!-- Barra de Navegación de la Noticia -->
+            <div class="sticky top-0 bg-slate-900/90 border-b border-slate-800 px-6 py-4 flex items-center justify-between z-10 shadow-lg">
+                <button id="back-to-map-btn" class="flex items-center space-x-2 text-slate-200 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-4 py-2 rounded-xl text-sm font-semibold transition shadow-md">
+                    <i class="fa-solid fa-arrow-left"></i>
+                    <span>Volver al mapa</span>
+                </button>
+                <div class="text-xs text-amber-400 font-mono font-semibold tracking-wider uppercase">
+                    Prensa Local Sevilla
+                </div>
+            </div>
+
+            <!-- Detalle de la Noticia -->
+            <div class="max-w-3xl mx-auto w-full px-6 py-10 flex-1">
+                <div class="space-y-5">
+                    <div class="flex items-center space-x-3 text-xs text-slate-400">
+                        <span id="full-news-district" class="bg-amber-500/15 text-amber-400 border border-amber-500/30 font-bold px-3 py-1 rounded-full uppercase tracking-wider">Distrito</span>
+                        <span>•</span>
+                        <span id="full-news-date" class="flex items-center gap-1.5"><i class="fa-regular fa-calendar text-slate-500"></i> Fecha</span>
+                    </div>
+
+                    <h1 id="full-news-title" class="text-3xl sm:text-4xl font-black text-white leading-tight tracking-tight">
+                        Cargando titular de la noticia...
+                    </h1>
+
+                    <div class="rounded-2xl overflow-hidden my-6 border border-slate-800 shadow-2xl bg-slate-900">
+                        <img id="full-news-image" src="" alt="Imagen noticia" class="w-full h-80 sm:h-96 object-cover">
+                    </div>
+
+                    <p id="full-news-summary" class="text-lg font-medium text-amber-200/90 border-l-4 border-amber-500 pl-4 py-1 italic bg-amber-500/5 rounded-r-lg">
+                        Resumen de la noticia...
+                    </p>
+
+                    <div id="full-news-content" class="text-slate-300 space-y-4 text-base leading-relaxed pt-4 border-t border-slate-800/80">
+                        <!-- Texto detallado -->
+                    </div>
+                </div>
+            </div>
+        </article>
+    </main>
+
+    <!-- OpenLayers JS -->
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+
+    <script>
+        // CARTO API KEY & BASE TILES
+        const CARTO_API_KEY = "cb1_441v_1_c905bee956e82794880f46bd";
+        
+        // GEOJSON POLÍGONOS DE LOS 11 DISTRITOS OFICIALES DE SEVILLA
+        const sevillaDistrictsGeoJSON = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": { "id": "casco-antiguo", "name": "Casco Antiguo" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.998, 37.398], [-5.992, 37.404], [-5.983, 37.401], 
+                            [-5.981, 37.388], [-5.987, 37.381], [-5.996, 37.383], [-5.998, 37.398]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "triana", "name": "Triana" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-6.012, 37.395], [-5.998, 37.398], [-5.996, 37.383], 
+                            [-6.002, 37.375], [-6.015, 37.380], [-6.012, 37.395]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "macarena", "name": "Macarena" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.992, 37.404], [-5.985, 37.418], [-5.972, 37.415], 
+                            [-5.975, 37.402], [-5.983, 37.401], [-5.992, 37.404]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "nervion", "name": "Nervión" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.981, 37.388], [-5.968, 37.391], [-5.962, 37.379], 
+                            [-5.975, 37.376], [-5.987, 37.381], [-5.981, 37.388]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "sur", "name": "Sur" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.987, 37.381], [-5.975, 37.376], [-5.968, 37.362], 
+                            [-5.985, 37.360], [-5.994, 37.372], [-5.987, 37.381]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "los-remedios", "name": "Los Remedios" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-6.002, 37.375], [-5.994, 37.372], [-5.988, 37.358], 
+                            [-6.010, 37.355], [-6.015, 37.368], [-6.002, 37.375]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "norte", "name": "Norte" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.992, 37.404], [-5.990, 37.435], [-5.955, 37.430], 
+                            [-5.960, 37.410], [-5.972, 37.415], [-5.985, 37.418], [-5.992, 37.404]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "san-pablo", "name": "San Pablo - Santa Justa" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.983, 37.401], [-5.975, 37.402], [-5.960, 37.405], 
+                            [-5.958, 37.392], [-5.968, 37.391], [-5.981, 37.388], [-5.983, 37.401]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "este", "name": "Este - Alcosa - Torreblanca" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.960, 37.410], [-5.900, 37.415], [-5.895, 37.380], 
+                            [-5.945, 37.382], [-5.958, 37.392], [-5.960, 37.405], [-5.960, 37.410]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "cerro-amate", "name": "Cerro - Amate" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.962, 37.379], [-5.945, 37.382], [-5.938, 37.362], 
+                            [-5.958, 37.360], [-5.968, 37.362], [-5.962, 37.379]
+                        ]]
+                    }
+                },
+                {
+                    "type": "Feature",
+                    "properties": { "id": "bellavista", "name": "Bellavista - La Palmera" },
+                    "geometry": {
+                        "type": "Polygon",
+                        "coordinates": [[
+                            [-5.985, 37.360], [-5.958, 37.360], [-5.950, 37.330], 
+                            [-5.980, 37.325], [-5.988, 37.358], [-5.985, 37.360]
+                        ]]
+                    }
+                }
+            ]
+        };
+
+        // NOTICIAS BASE DE DATOS LOCAL
+        const newsDatabase = {
+            "casco-antiguo": {
+                name: "Casco Antiguo",
+                news: [
+                    {
+                        title: "Culmina la restructuración peatonal en las inmediaciones de la Giralda",
+                        date: "30 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1569336415962-a4bd9f69cd83?auto=format&fit=crop&w=800&q=80",
+                        summary: "El plan de conservación del centro histórico finaliza sus actuaciones de repavimentación e iluminación LED.",
+                        content: "<p>El Ayuntamiento de Sevilla ha dado por concluidas las intervenciones en el entorno de la Catedral y el Archivo de Indias. Las actuaciones han permitido renovar más de 3.000 metros cuadrados de pavimento por piedra natural recuperada y se han sustituido los antiguos puntos de luz por sistemas de eficiencia LED automatizados.</p><p>Además, se han habilitado nuevas zonas de estancia peatonal para mejorar la convivencia entre los vecinos del centro y la afluencia turística.</p>"
+                    },
+                    {
+                        title: "La Bienal de Flamenco inaugurará escenarios en el Real Alcázar",
+                        date: "28 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1543783207-ec64e4d95325?auto=format&fit=crop&w=800&q=80",
+                        summary: "Más de 35 recitales de baile y cante se darán cita en los patios emblemáticos del Casco Antiguo.",
+                        content: "<p>La programación de la Bienal arranca esta temporada con una clara apuesta por escenarios históricos singulares. Los Jardines del Alcázar y las inmediaciones del Palacio de las Dueñas contarán con acústica adaptada para recitales intimistas de noche.</p>"
+                    },
+                    {
+                        title: "Avanza la modernización del comercio tradicional en las calles Sierpes y Tetuán",
+                        date: "22 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=800&q=80",
+                        summary: "Nuevas ayudas digitales y exenciones a locales centenarios del centro urbano.",
+                        content: "<p>Los establecimientos históricos del Casco Antiguo recibirán apoyo institucional para implantar sistemas de venta digital sin perder la estética tradicional de sus fachadas comerciales.</p>"
+                    }
+                ]
+            },
+            "triana": {
+                name: "Triana",
+                news: [
+                    {
+                        title: "El Mercado de Triana estrena su nuevo mirador gastronómico hacia el río",
+                        date: "29 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1533900298318-6b8da08a523e?auto=format&fit=crop&w=800&q=80",
+                        summary: "Los puestos del histórico mercado abren una terraza panorámica con productos de la ribera.",
+                        content: "<p>El icónico Mercado de Triana ha completado la apertura de su pasarela gastronómica exterior. Los clientes podrán disfrutar de productos frescos locales preparados al instante contemplando las vistas hacia la margen del Guadalquivir y la Calle Betis.</p>"
+                    },
+                    {
+                        title: "Restauración de paneles cerámicos en la peatonal de San Jacinto",
+                        date: "24 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1513694203232-719a280e022f?auto=format&fit=crop&w=800&q=80",
+                        summary: "Artesanos alfareros recuperan azulejos monumentales del siglo XIX.",
+                        content: "<p>La intervención patrimonial sobre las fachadas de la calle San Jacinto ha logrado recuperar más de un centenar de piezas cerámicas únicas fabricadas originalmente en las históricas cerámicas del barrio.</p>"
+                    }
+                ]
+            },
+            "macarena": {
+                name: "Macarena",
+                news: [
+                    {
+                        title: "El parque de la Muralla suma 300 árboles autóctonos en su plan verde",
+                        date: "27 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1519331379826-f10be5486c6f?auto=format&fit=crop&w=800&q=80",
+                        summary: "Especialistas introducen especies de sombra para mitigar las temperaturas en verano.",
+                        content: "<p>El plan de arbolado urbano ha desplegado una intensa reforestación en los jardines de la Muralla almohade y el entorno de la Basílica de la Macarena, mejorando la calidad del aire del distrito.</p>"
+                    },
+                    {
+                        title: "Nuevas tecnologías de diagnóstico robótico en el Hospital Virgen Macarena",
+                        date: "20 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1516549655169-df83a0774514?auto=format&fit=crop&w=800&q=80",
+                        summary: "Se pone en funcionamiento una unidad pionera para cirugías no invasivas.",
+                        content: "<p>El centro hospitalario consolida su posición de vanguardia tecnológica al incorporar equipamiento de precisión quirúrgica para intervenciones vasculares y traumatológicas.</p>"
+                    }
+                ]
+            },
+            "nervion": {
+                name: "Nervión",
+                news: [
+                    {
+                        title: "El nuevo carril bici de Eduardo Dato conecta Nervión con Santa Justa",
+                        date: "28 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1485965120184-e220f721d03e?auto=format&fit=crop&w=800&q=80",
+                        summary: "Concluyen los trabajos de la vía ciclista segregada con iluminación fotovoltaica.",
+                        content: "<p>La arteria principal de Nervión estrena un trazado protegido de dos kilómetros dotado de señalización inteligente y estaciones de reparación rápida para bicicletas y patinetes.</p>"
+                    },
+                    {
+                        title: "Abren las salas de estudio de la nueva Biblioteca Pública de Nervión",
+                        date: "19 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1521587760476-6c12a4b040da?auto=format&fit=crop&w=800&q=80",
+                        summary: "Equipamiento de última generación con capacidad para más de 300 usuarios simultáneos.",
+                        content: "<p>Las instalaciones cuentan con zonas de co-working, espacios multimedia de acceso público y un catálogo bibliográfico actualizado enfocado en literatura y tecnología.</p>"
+                    }
+                ]
+            },
+            "sur": {
+                name: "Sur",
+                news: [
+                    {
+                        title: "El Parque de María Luisa acoge el Gran Festival Internacional de Paisajismo",
+                        date: "26 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1585320806297-9794b3e4eeae?auto=format&fit=crop&w=800&q=80",
+                        summary: "Jardineros e ingenieros crean intervenciones botánicas sostenibles alrededor de la Plaza de España.",
+                        content: "<p>Durante las próximas semanas se llevarán a cabo recorridos nocturnos guiados, muestras hortícolas y talleres de educación ambiental en las zonas ajardinadas del distrito Sur.</p>"
+                    }
+                ]
+            },
+            "los-remedios": {
+                name: "Los Remedios",
+                news: [
+                    {
+                        title: "Inicia el diseño del nuevo parque fluvial en los terrenos del antiguo recinto",
+                        date: "25 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1470071459604-3b5ec3a7fe05?auto=format&fit=crop&w=800&q=80",
+                        summary: "Ampliación de áreas recreativas para el disfrute de las familias del distrito.",
+                        content: "<p>El plan urbanístico transformará la ribera sur en una gran pradera con embarcaderos deportivos, juegos infantiles y circuitos de calistenia frente al río.</p>"
+                    }
+                ]
+            },
+            "norte": {
+                name: "Norte",
+                news: [
+                    {
+                        title: "Entra en servicio la comunidad solar fotovoltaica del Distrito Norte",
+                        date: "23 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1509391365360-2e959784a276?auto=format&fit=crop&w=800&q=80",
+                        summary: "Energía 100% limpia para edificios municipales y colegios públicos de la zona.",
+                        content: "<p>Con más de 1.200 módulos solares instalados en cubiertas públicas, el proyecto busca abaratar la factura energética de los equipamientos del barrio y reducir emisiones de CO2.</p>"
+                    }
+                ]
+            },
+            "san-pablo": {
+                name: "San Pablo - Santa Justa",
+                news: [
+                    {
+                        title: "Aprobada la reordenación peatonal de la explanada de la Estación",
+                        date: "27 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1474487548417-781cb71495f3?auto=format&fit=crop&w=800&q=80",
+                        summary: "Un boulevard arbolado unirá el vestíbulo del AVE con el distrito San Pablo.",
+                        content: "<p>Las obras contemplan la instalación de marquesinas con vegetación vertical, fuentes de agua potable y paradas intermodales de transporte público de mayor capacidad.</p>"
+                    }
+                ]
+            },
+            "este": {
+                name: "Este - Alcosa - Torreblanca",
+                news: [
+                    {
+                        title: "FIBES celebra el congreso internacional de Innovación y Smart Cities",
+                        date: "30 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1511578314322-379afb476865?auto=format&fit=crop&w=800&q=80",
+                        summary: "Más de 400 empresas tecnológicas presentan soluciones para ciudades sostenibles.",
+                        content: "<p>El Palacio de Congresos y Exposiciones de Sevilla se convierte en la capital europea del debate tecnológico sobre gestión del agua, transporte autónomo e IA aplicada al urbanismo.</p>"
+                    }
+                ]
+            },
+            "cerro-amate": {
+                name: "Cerro - Amate",
+                news: [
+                    {
+                        title: "Plan integral de mejora urbana y eficiencia energética en residenciales",
+                        date: "29 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1486406146926-c627a92ad1ab?auto=format&fit=crop&w=800&q=80",
+                        summary: "Inversiones públicas para la rehabilitación de fachadas y zonas comunes.",
+                        content: "<p>Se inician las subvenciones destinadas a aislamientos térmicos, instalación de ascensores y reurbanización de plazas en los barrios del distrito Cerro-Amate.</p>"
+                    }
+                ]
+            },
+            "bellavista": {
+                name: "Bellavista - La Palmera",
+                news: [
+                    {
+                        title: "Nuevas instalaciones deportivas y centro de creación para jóvenes",
+                        date: "21 Septiembre, 2026",
+                        image: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?auto=format&fit=crop&w=800&q=80",
+                        summary: "El equipamiento contará con salas polivalentes y pistas multideporte.",
+                        content: "<p>El nuevo complejo deportivo y cultural proporcionará alternativas saludables de ocio para la juventud de Bellavista, incorporando talleres de música y programación.</p>"
+                    }
+                ]
+            }
+        };
+
+        // INICIALIZACIÓN DEL MAPA DE OPENLAYERS
+        window.addEventListener('load', () => {
+            
+            // Estilos vectoriales de los polígonos
+            const defaultStyle = new ol.style.Style({
+                fill: new ol.style.Fill({
+                    color: 'rgba(234, 179, 8, 0.25)' // Amarillo translúcido
+                }),
+                stroke: new ol.style.Stroke({
+                    color: '#f59e0b',
+                    width: 2
+                })
+            });
+
+            const hoverStyle = new ol.style.Style({
+                fill: new ol.style.Fill({
+                    color: 'rgba(239, 68, 68, 0.45)' // Rojo resplandor al pasar
+                }),
+                stroke: new ol.style.Stroke({
+                    color: '#ffffff',
+                    width: 3
+                })
+            });
+
+            const selectedStyle = new ol.style.Style({
+                fill: new ol.style.Fill({
+                    color: 'rgba(245, 158, 11, 0.55)' // Dorado seleccionado
+                }),
+                stroke: new ol.style.Stroke({
+                    color: '#fbbf24',
+                    width: 4
+                })
+            });
+
+            // Fuente vectorial leyendo el GeoJSON
+            const vectorSource = new ol.source.Vector({
+                features: new ol.format.GeoJSON().readFeatures(sevillaDistrictsGeoJSON, {
+                    dataProjection: 'EPSG:4326',
+                    featureProjection: 'EPSG:3857'
+                })
+            });
+
+            const vectorLayer = new ol.layer.Vector({
+                source: vectorSource,
+                style: defaultStyle
+            });
+
+            // Capa de Mapa Base (CARTO VOYAGER CON API KEY)
+            const cartoBaseLayer = new ol.layer.Tile({
+                source: new ol.source.XYZ({
+                    url: `https://a.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_API_KEY}`,
+                    attributions: '&copy; <a href="https://carto.com/">CARTO</a> &copy; OpenStreetMap contributors',
+                    maxZoom: 19
+                })
+            });
+
+            // Instancia del mapa centrado en Sevilla
+            const map = new ol.Map({
+                target: 'map',
+                layers: [cartoBaseLayer, vectorLayer],
+                view: new ol.View({
+                    center: ol.proj.fromLonLat([-5.975, 37.388]), // Coordenadas de Sevilla
+                    zoom: 12.8,
+                    minZoom: 11,
+                    maxZoom: 17
+                })
+            });
+
+            // Configurar Popup flotante al pasar el ratón
+            const popupElement = document.getElementById('popup');
+            const popupContent = document.getElementById('popup-content');
+            const overlay = new ol.Overlay({
+                element: popupElement,
+                offset: [0, -10],
+                positioning: 'bottom-center'
+            });
+            map.addOverlay(overlay);
+
+            // Gestión del estado de selección
+            let hoveredFeature = null;
+            let selectedFeature = null;
+
+            // Hover sobre los distritos
+            map.on('pointermove', function (evt) {
+                if (evt.dragging) return;
+
+                const pixel = map.getEventPixel(evt.originalEvent);
+                let hitFeature = null;
+
+                map.forEachFeatureAtPixel(pixel, function (feature) {
+                    hitFeature = feature;
+                    return true;
+                });
+
+                // Cambiar el cursor
+                map.getTargetElement().style.cursor = hitFeature ? 'pointer' : '';
+
+                // Restaurar anterior hover si no es el seleccionado
+                if (hoveredFeature && hoveredFeature !== selectedFeature) {
+                    hoveredFeature.setStyle(defaultStyle);
+                }
+
+                if (hitFeature) {
+                    if (hitFeature !== selectedFeature) {
+                        hitFeature.setStyle(hoverStyle);
+                    }
+                    popupContent.innerText = hitFeature.get('name');
+                    overlay.setPosition(evt.coordinate);
+                    popupElement.classList.remove('hidden');
+                    hoveredFeature = hitFeature;
+                } else {
+                    popupElement.classList.add('hidden');
+                    hoveredFeature = null;
+                }
+            });
+
+            // Click en un distrito
+            map.on('click', function (evt) {
+                map.forEachFeatureAtPixel(evt.pixel, function (feature) {
+                    if (selectedFeature) {
+                        selectedFeature.setStyle(defaultStyle);
+                    }
+
+                    selectedFeature = feature;
+                    selectedFeature.setStyle(selectedStyle);
+
+                    const districtId = feature.get('id');
+                    loadDistrictNews(districtId);
+
+                    // Centrar suavemente en la zona
+                    const extent = feature.getGeometry().getExtent();
+                    map.getView().fit(extent, {
+                        duration: 600,
+                        padding: [50, 50, 50, 50]
+                    });
+
+                    return true;
+                });
+            });
+
+            // FUNCIÓN: Cargar Noticias en el Panel Lateral
+            function loadDistrictNews(districtId) {
+                const data = newsDatabase[districtId];
+                const newsList = document.getElementById('news-list');
+                const selectedDistrictTitle = document.getElementById('selected-district-title');
+                const newsDrawer = document.getElementById('news-drawer');
+
+                if (!data) return;
+
+                selectedDistrictTitle.textContent = data.name;
+                newsDrawer.classList.remove('translate-x-full'); // Abrir panel en móvil
+
+                newsList.innerHTML = '';
+
+                data.news.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'bg-slate-800/70 hover:bg-slate-800 border border-slate-700/60 rounded-xl p-4 transition duration-200 cursor-pointer group shadow-lg hover:border-amber-500/50 fade-in';
+                    
+                    card.innerHTML = `
+                        <div class="relative h-36 rounded-lg overflow-hidden mb-3 bg-slate-900">
+                            <img src="${item.image}" alt="${item.title}" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
+                            <span class="absolute bottom-2 left-2 text-[10px] font-bold bg-amber-500 text-slate-950 px-2.5 py-0.5 rounded-full shadow">
+                                ${data.name}
+                            </span>
+                        </div>
+                        <div class="text-[11px] text-slate-400 mb-1 flex items-center gap-1">
+                            <i class="fa-regular fa-clock text-amber-400"></i> ${item.date}
+                        </div>
+                        <h3 class="text-sm font-bold text-white group-hover:text-amber-400 transition leading-snug mb-1.5">
+                            ${item.title}
+                        </h3>
+                        <p class="text-xs text-slate-300 line-clamp-2 leading-relaxed">
+                            ${item.summary}
+                        </p>
+                        <div class="mt-3 pt-2 border-t border-slate-700/50 flex items-center justify-between text-xs font-semibold text-amber-400">
+                            <span>Leer noticia</span>
+                            <i class="fa-solid fa-arrow-right text-xs group-hover:translate-x-1 transition"></i>
+                        </div>
+                    `;
+
+                    card.addEventListener('click', () => {
+                        openFullNews(item, data.name);
+                    });
+
+                    newsList.appendChild(card);
+                });
+            }
+
+            // FUNCIÓN: Abrir vista completa de noticia
+            function openFullNews(newsItem, districtName) {
+                document.getElementById('full-news-district').textContent = districtName;
+                document.getElementById('full-news-date').innerHTML = `<i class="fa-regular fa-calendar text-slate-400"></i> ${newsItem.date}`;
+                document.getElementById('full-news-title').textContent = newsItem.title;
+                document.getElementById('full-news-image').src = newsItem.image;
+                document.getElementById('full-news-summary').textContent = newsItem.summary;
+                document.getElementById('full-news-content').innerHTML = newsItem.content;
+
+                const fullView = document.getElementById('news-full-view');
+                fullView.classList.remove('hidden');
+                fullView.classList.add('flex');
+            }
+
+            // EVENTO: Volver al mapa
+            document.getElementById('back-to-map-btn').addEventListener('click', () => {
+                const fullView = document.getElementById('news-full-view');
+                fullView.classList.add('hidden');
+                fullView.classList.remove('flex');
+            });
+
+            // EVENTO: Cerrar panel en móvil
+            document.getElementById('close-drawer-btn').addEventListener('click', () => {
+                document.getElementById('news-drawer').classList.add('translate-x-full');
+            });
+
+            // Seleccionar por defecto el Casco Antiguo al iniciar
+            setTimeout(() => {
+                const features = vectorSource.getFeatures();
+                const defaultFeature = features.find(f => f.get('id') === 'casco-antiguo');
+                if (defaultFeature) {
+                    selectedFeature = defaultFeature;
+                    selectedFeature.setStyle(selectedStyle);
+                    loadDistrictNews('casco-antiguo');
+                }
+            }, 400);
+        });
+    </script>
+</body>
+</html>
